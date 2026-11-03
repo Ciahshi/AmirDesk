@@ -162,9 +162,24 @@ jobs:
           Copy-Item -Path "$releaseDir\*" -Destination $packageDir -Recurse -Force
           Rename-Item -Path (Join-Path $packageDir "rustdesk.exe") -NewName "AmirDesk-$displayRole.exe"
 
-          # The topmost helper is used by the remote desktop window on Windows.
-          New-Item -ItemType Directory -Force -Path "third-party" | Out-Null
-          Copy-Item -Path "third-party\WindowInjection.dll" -Destination $packageDir -ErrorAction SilentlyContinue
+          # The topmost helper is required by the remote desktop window on Windows.
+          $topmostDll = "third-party\WindowInjection.dll"
+          if (!(Test-Path $topmostDll)) {
+            throw "Required Windows helper is missing: $topmostDll"
+          }
+          Copy-Item -LiteralPath $topmostDll -Destination $packageDir -ErrorAction Stop
+
+          # Preserve the upstream license in every redistributable package.
+          if (!(Test-Path "LICENCE")) {
+            throw "Repository LICENCE file is missing"
+          }
+          Copy-Item -LiteralPath "LICENCE" -Destination (Join-Path $packageDir "LICENCE") -ErrorAction Stop
+
+          # Smoke-test the packaged executable before upload.
+          $versionOutput = (& (Join-Path $packageDir "AmirDesk-$displayRole.exe") --version | Out-String).Trim()
+          if ($LASTEXITCODE -ne 0 -or $versionOutput -notmatch '^\d+\.\d+\.\d+') {
+            throw "Packaged AmirDesk executable failed its --version smoke test: $versionOutput"
+          }
 
           # Include the USB virtual-display helper bundle used by the optional virtual-display feature.
           Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
