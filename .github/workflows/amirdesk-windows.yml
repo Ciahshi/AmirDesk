@@ -1,0 +1,198 @@
+name: Build AmirDesk Customer and Admin (Windows x64)
+
+on:
+  push:
+    branches:
+      - amirdesk-webrtc-foundation
+    paths:
+      - "src/**"
+      - "flutter/**"
+      - "libs/**"
+      - "Cargo.toml"
+      - "Cargo.lock"
+      - "build.py"
+      - "vcpkg.json"
+      - ".github/workflows/amirdesk-windows.yml"
+      - ".github/workflows/bridge.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RUST_VERSION: "1.75"
+  FLUTTER_VERSION: "3.24.5"
+  LLVM_VERSION: "15.0.6"
+  VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
+
+jobs:
+  generate-bridge:
+    uses: ./.github/workflows/bridge.yml
+
+  build-topmost:
+    uses: ./.github/workflows/third-party-RustDeskTempTopMostWindow.yml
+    with:
+      upload-artifact: true
+      target: windows-2022
+      configuration: Release
+      platform: x64
+      target_version: Windows10
+
+  build-windows:
+    name: AmirDesk ${{ matrix.role }} — Windows x64
+    runs-on: windows-2022
+    needs:
+      - generate-bridge
+      - build-topmost
+    strategy:
+      fail-fast: false
+      matrix:
+        role:
+          - customer
+          - admin
+    env:
+      AMIRDESK_ROLE: ${{ matrix.role }}
+      VCPKG_BINARY_SOURCES: "clear;x-gha,readwrite"
+
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          submodules: recursive
+
+      - name: Export GitHub Actions cache environment variables
+        uses: actions/github-script@d7906e4ad0b1822421a7e6a35d5ca353c962f410 # v6
+        with:
+          script: |
+            core.exportVariable('ACTIONS_CACHE_URL', process.env.ACTIONS_CACHE_URL || '');
+            core.exportVariable('ACTIONS_RUNTIME_TOKEN', process.env.ACTIONS_RUNTIME_TOKEN || '');
+
+      - name: Restore generated Flutter bridge
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: bridge-artifact
+          path: ./
+
+      - name: Install LLVM and Clang
+        uses: KyleMayes/install-llvm-action@ebc0426251bc40c7cd31162802432c68818ab8f0 # v2.0.9
+        with:
+          version: ${{ env.LLVM_VERSION }}
+
+      - name: Install Flutter
+        id: flutter
+        uses: subosito/flutter-action@2783a3f08e1baf891508463f8c6653c258246225 # v2.12.0
+        with:
+          channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          architecture: x64
+
+      - name: Install Flutter Windows engine
+        shell: pwsh
+        run: |
+          flutter doctor -v
+          flutter precache --windows
+          $engineRoot = "${{ steps.flutter.outputs['CACHE-PATH'] }}\bin\cache\artifacts\engine\windows-x64-release"
+          Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
+          Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
+          Copy-Item -Path windows-x64-release\* -Destination $engineRoot -Recurse -Force
+
+      - name: Patch Flutter 3.24.5
+        shell: bash
+        run: |
+          cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff "$(dirname "$(dirname "$(which flutter)")")"
+          cd "$(dirname "$(dirname "$(which flutter)")")"
+          git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@e97e2d8cc328f1b50210efc529dca0028893a2d9 # v1
+        with:
+          toolchain: ${{ env.RUST_VERSION }}
+          targets: x86_64-pc-windows-msvc
+          components: rustfmt
+
+      - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          prefix-key: windows-2022-amirdesk-${{ matrix.role }}
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@b1a0dd252f06b9e25b3c022a9a03bd7a427fb6a2 # v11
+        with:
+          vcpkgDirectory: C:\vcpkg
+          vcpkgGitCommitId: ${{ env.VCPKG_COMMIT_ID }}
+          doNotCache: false
+
+      - name: Install native dependencies
+        shell: bash
+        env:
+          VCPKG_DEFAULT_HOST_TRIPLET: x64-windows-static
+        run: |
+          if ! "$VCPKG_ROOT/vcpkg" install --triplet x64-windows-static --x-install-root="$VCPKG_ROOT/installed"; then
+            find "$VCPKG_ROOT/" -name "*.log" | while read -r log_file; do
+              echo "$log_file:"
+              cat "$log_file"
+            done
+            exit 1
+          fi
+
+      - name: Build AmirDesk role
+        shell: pwsh
+        run: |
+          if ($env:AMIRDESK_ROLE -notin @("customer", "admin")) {
+            throw "AMIRDESK_ROLE must be customer or admin"
+          }
+
+          Write-Host "Building AmirDesk role: $env:AMIRDESK_ROLE"
+          python3 .\build.py --portable --flutter --skip-portable-pack --hwcodec --vram
+
+          $releaseDir = "flutter\build\windows\x64\runner\Release"
+          $exe = Join-Path $releaseDir "rustdesk.exe"
+          if (!(Test-Path $exe)) {
+            throw "Build did not produce $exe"
+          }
+
+          $displayRole = if ($env:AMIRDESK_ROLE -eq "customer") { "Customer" } else { "Admin" }
+          $packageDir = "dist\AmirDesk-$displayRole"
+          New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
+          Copy-Item -Path "$releaseDir\*" -Destination $packageDir -Recurse -Force
+          Rename-Item -Path (Join-Path $packageDir "rustdesk.exe") -NewName "AmirDesk-$displayRole.exe"
+
+          # The topmost helper is used by the remote desktop window on Windows.
+          New-Item -ItemType Directory -Force -Path "third-party" | Out-Null
+          Copy-Item -Path "third-party\WindowInjection.dll" -Destination $packageDir -ErrorAction SilentlyContinue
+
+          # Include the USB virtual-display helper bundle used by the optional virtual-display feature.
+          Invoke-WebRequest -Uri https://github.com/rustdesk-org/rdev/releases/download/usbmmidd_v2/usbmmidd_v2.zip -OutFile usbmmidd_v2.zip
+          Expand-Archive usbmmidd_v2.zip -DestinationPath .
+          Remove-Item -Path usbmmidd_v2\Win32 -Recurse -ErrorAction SilentlyContinue
+          Remove-Item -Path "usbmmidd_v2\deviceinstaller64.exe", "usbmmidd_v2\deviceinstaller.exe", "usbmmidd_v2\usbmmidd.bat" -ErrorAction SilentlyContinue
+          Copy-Item -Path "usbmmidd_v2" -Destination (Join-Path $packageDir "usbmmidd_v2") -Recurse -Force
+
+          @"
+          AmirDesk $displayRole
+          ==================
+
+          Run AmirDesk-$displayRole.exe to start the application.
+
+          Customer: shows the device ID and requires a person at this computer to approve each incoming session.
+          Admin: outgoing-only support client for connecting to customer device IDs.
+
+          This is a portable Windows x64 build. Extract the full ZIP before running it.
+          The first build uses the configured public RustDesk rendezvous/relay network by default.
+          Do not use this build for unattended access. Keep the Customer approval prompt enabled.
+          "@ | Set-Content -Path (Join-Path $packageDir "README.txt") -Encoding UTF8
+
+          $hash = Get-FileHash -LiteralPath (Join-Path $packageDir "AmirDesk-$displayRole.exe") -Algorithm SHA256
+          "SHA256  $($hash.Hash)  AmirDesk-$displayRole.exe" | Set-Content -Path (Join-Path $packageDir "SHA256SUMS.txt") -Encoding ASCII
+
+          if (!(Test-Path (Join-Path $packageDir "data\flutter_assets"))) {
+            throw "Flutter assets are missing from the package"
+          }
+
+      - name: Upload AmirDesk package
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: AmirDesk-${{ matrix.role }}-Windows-x64
+          path: dist/AmirDesk-*
+          if-no-files-found: error
+          compression-level: 6
+
