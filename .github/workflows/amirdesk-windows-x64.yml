@@ -69,6 +69,7 @@ jobs:
           version: ${{ env.LLVM_VERSION }}
 
       - name: Install Flutter
+        id: flutter
         uses: subosito/flutter-action@2783a3f08e1baf891508463f8c6653c258246225 # v2.12.0
         with:
           channel: stable
@@ -82,7 +83,8 @@ jobs:
           flutter precache --windows
           Invoke-WebRequest -Uri https://github.com/rustdesk/engine/releases/download/main/windows-x64-release.zip -OutFile windows-x64-release.zip
           Expand-Archive -Path windows-x64-release.zip -DestinationPath windows-x64-release
-          $enginePath = Join-Path $env:FLUTTER_ROOT "bin/cache/artifacts/engine/windows-x64-release"
+          $flutterRoot = "${{ steps.flutter.outputs['CACHE-PATH'] }}"
+          $enginePath = Join-Path $flutterRoot "bin/cache/artifacts/engine/windows-x64-release"
           if (-not (Test-Path $enginePath)) { throw "Flutter Windows x64 engine directory not found: $enginePath" }
           Copy-Item -Path "windows-x64-release/*" -Destination $enginePath -Recurse -Force
 
