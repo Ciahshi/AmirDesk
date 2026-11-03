@@ -53,6 +53,32 @@ fn initialize(app_dir: &str, custom_client_config: &str) {
     } else {
         crate::read_custom_client(custom_client_config);
     }
+
+    // AmirDesk profiles are compile-time choices. Customer is deliberately host-only:
+    // conn-type=incoming also activates RustDesk's existing incoming-only desktop UI.
+    match option_env!("AMIRDESK_ROLE") {
+        Some("customer") => {
+            *config::APP_NAME.write().unwrap() = "AmirDesk-Customer".to_owned();
+            config::HARD_SETTINGS
+                .write()
+                .unwrap()
+                .insert("conn-type".to_owned(), "incoming".to_owned());
+            // Require an explicit click on the Customer machine for every session.
+            config::Config::set_option("approve-mode".to_owned(), "click".to_owned());
+            log::info!("AmirDesk Customer profile enabled (incoming-only, click-to-approve)");
+        }
+        Some("admin") => {
+            *config::APP_NAME.write().unwrap() = "AmirDesk-Admin".to_owned();
+            config::HARD_SETTINGS.write().unwrap().remove("conn-type");
+            log::info!("AmirDesk Admin profile enabled");
+        }
+        Some(role) => {
+            log::error!("Unknown AMIRDESK_ROLE '{role}'; expected customer or admin");
+        }
+        None => {
+            log::warn!("AMIRDESK_ROLE is not set; using upstream RustDesk profile");
+        }
+    }
     #[cfg(target_os = "android")]
     {
         // flexi_logger can't work when android_logger initialized.

@@ -10,7 +10,7 @@ use hbb_common::dlopen::{
     Error as LibError,
 };
 use hbb_common::{
-    anyhow::anyhow, bail, config::LocalConfig, get_version_number, log,
+    anyhow::anyhow, bail, config::{self, LocalConfig}, get_version_number, log,
     rendezvous_proto::ConnType, ResultType,
 };
 use base::message_proto::*;
@@ -1318,6 +1318,10 @@ pub fn session_add(
     conn_token: Option<String>,
     login_method: &str,
 ) -> ResultType<FlutterSession> {
+    if config::is_incoming_only() {
+        bail!("AmirDesk Customer is host-only; outgoing sessions are disabled.");
+    }
+
     let conn_type = if is_file_transfer {
         ConnType::FILE_TRANSFER
     } else if is_view_camera {

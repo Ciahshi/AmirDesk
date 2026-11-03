@@ -91,6 +91,7 @@ fn install_android_deps() {
 }
 
 fn main() {
+    println!("cargo:rerun-if-env-changed=AMIRDESK_ROLE");
     hbb_common::gen_version();
     install_android_deps();
     #[cfg(all(windows, feature = "inline"))]

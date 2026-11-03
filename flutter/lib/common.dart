@@ -3061,7 +3061,13 @@ int versionCmp(String v1, String v2) {
 }
 
 String getWindowName({WindowType? overrideType}) {
-  final name = bind.mainGetAppNameSync();
+  var name = bind.mainGetAppNameSync();
+  const amirDeskRole = String.fromEnvironment('AMIRDESK_ROLE');
+  if (amirDeskRole == 'customer') {
+    name = 'AmirDesk Customer';
+  } else if (amirDeskRole == 'admin') {
+    name = 'AmirDesk Admin';
+  }
   switch (overrideType ?? kWindowType) {
     case WindowType.Main:
       return name;

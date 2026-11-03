@@ -973,7 +973,14 @@ def build_flutter_windows(version, features, skip_portable_pack):
             print("cargo build failed, please check rust source code.")
             exit(-1)
     os.chdir('flutter')
-    system2('flutter build windows --release')
+    amirdesk_role = os.environ.get("AMIRDESK_ROLE", "").strip().lower()
+    if amirdesk_role and amirdesk_role not in ("customer", "admin"):
+        raise RuntimeError("AMIRDESK_ROLE must be 'customer' or 'admin'")
+    if amirdesk_role:
+        system2(
+            f'flutter build windows --release --dart-define=AMIRDESK_ROLE={amirdesk_role}')
+    else:
+        system2('flutter build windows --release')
     os.chdir('..')
     shutil.copy2('target/release/deps/dylib_virtual_display.dll',
                  flutter_build_dir_2)
