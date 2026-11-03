@@ -21,6 +21,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: amirdesk-windows-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   RUST_VERSION: "1.75"
   FLUTTER_VERSION: "3.24.5"
@@ -48,6 +52,7 @@ jobs:
       - build-topmost
     strategy:
       fail-fast: false
+      max-parallel: 1
       matrix:
         role:
           - customer
