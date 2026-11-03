@@ -1,90 +1,29 @@
-# AmirDesk Next — WebRTC direction
+# AmirDesk Next — Cloudflare experiment
 
-> Experimental foundation only. This is not yet a working remote-desktop application.
+This folder is a separate experiment for future web-based account/session APIs.
 
-AmirDesk Next is a proposed independent remote-support product with two separately packaged clients:
+**It is not the current AmirDesk remote-desktop transport and is not needed to run the Windows builds.**
 
-- **AmirDesk Customer** — a visible Windows host agent. The person at the remote computer must be able to approve, view, and end each support session.
-- **AmirDesk Admin** — the support operator application. It signs in, requests access to an enrolled device, and connects only after customer approval.
+The working Windows clients use the existing RustDesk remote desktop engine and its rendezvous/relay protocol. That protocol uses native TCP/UDP and its compatible HBBS/HBBR server; a normal Cloudflare Worker cannot transparently host those listeners.
 
-## Why this is a separate implementation
+## Planned role split
 
-The current root project is based on the RustDesk codebase and its native rendezvous/relay protocol. RustDesk's `hbbs` and `hbbr` use TCP and UDP listeners. Cloudflare Workers are suitable for HTTPS and WebSocket signaling, but they are not a drop-in host for those native listeners.
+- **AmirDesk Customer:** Windows host profile; incoming connections only; every support session requires a local click-to-approve.
+- **AmirDesk Admin:** Windows operator profile; outgoing connections only.
 
-AmirDesk Next therefore uses a different transport:
+These profiles are compiled from the existing AMIRDESK_ROLE=customer|admin setting in src/flutter_ffi.rs.
 
-1. A native Windows Customer agent captures the desktop and receives approved input.
-2. The Admin client displays the remote stream and sends control events.
-3. WebRTC attempts a direct peer-to-peer connection.
-4. Cloudflare Workers + Durable Objects handle authentication, device presence, session coordination, and WebRTC signaling.
-5. A managed TURN service is used only when direct connectivity cannot cross NAT/firewalls.
+## Cloudflare experiment
 
-The signaling Worker must never carry the continuous screen-video stream. Keeping media peer-to-peer reduces server bandwidth and cost.
+The cloudflare/ directory contains an early HTTPS/WebSocket signaling prototype using a Durable Object. It can be developed independently for future account management or a future WebRTC client, but it currently does not:
+- authenticate real AmirDesk user/device accounts;
+- register Customer devices or enforce their permissions;
+- connect to the existing RustDesk native rendezvous protocol;
+- transmit screen video, audio, or remote input;
+- provide a TURN relay.
 
-## Planned Cloudflare services
+Do not deploy it as the backend for the current Windows clients.
 
-| Service | Responsibility |
-| --- | --- |
-| Workers | HTTPS API, auth endpoints, session creation |
-| Durable Objects | Live WebSocket signaling and per-session coordination |
-| D1 | Users, enrolled devices, permissions, and audit events |
-| R2 | Optional signed installer/update artifacts |
-| WebRTC + TURN | Direct media/data transport with relay fallback |
+## Current working build path
 
-A custom domain is optional; the Worker can initially use its `workers.dev` address.
-
-## Security requirements
-
-- No hidden or silent remote access.
-- Customer approval before control begins.
-- A persistent, visible session indicator and an obvious Stop button.
-- Short-lived, role-scoped session tokens.
-- End-to-end protected WebRTC transport.
-- Admin audit events and device-level permissions.
-- Unattended access, if ever added, must be an explicit opt-in with revocation.
-
-## Current implementation status
-
-- [x] Isolated development branch created.
-- [x] Cloudflare Durable Object signaling skeleton.
-- [x] Short-lived HMAC-signed signaling tokens.
-- [ ] User authentication and enrollment API.
-- [ ] D1-backed device registry and audit trail.
-- [ ] Customer Windows agent (screen capture, consent UI, input).
-- [ ] Admin application (device list, approval flow, viewer).
-- [ ] WebRTC media and data-channel integration.
-- [ ] TURN configuration and connectivity tests.
-- [ ] Installer signing, updates, and release workflows.
-
-The signaling API in this branch is a development foundation. Its bootstrap endpoint is protected by a Cloudflare secret and must be replaced with proper account/device authentication before production use.
-
-## Local setup
-
-Install a current Node.js LTS release, then:
-
-```bash
-cd amirdesk-next/cloudflare
-npm install
-npm run dev
-```
-
-Configure secrets before deployment:
-
-```bash
-npx wrangler secret put ADMIN_API_TOKEN
-npx wrangler secret put SIGNALING_SECRET
-```
-
-Deploy:
-
-```bash
-npm run deploy
-```
-
-The initial API exposes:
-
-- `GET /health` — health check.
-- `POST /api/v1/sessions` — development-only session token minting; requires `Authorization: Bearer <ADMIN_API_TOKEN>`.
-- `GET /ws/:sessionId?token=...` — authenticated WebSocket signaling endpoint.
-
-This initial signaling layer exchanges only WebRTC negotiation messages. It does not capture a desktop, transmit video, or control a computer yet.
+See the root README and .github/workflows/amirdesk-windows.yml. The workflow builds separate portable Windows x64 packages. The first test can use the configured public RustDesk network defaults where available. A private production network requires compatible HBBS/HBBR services and a shared server public key.
