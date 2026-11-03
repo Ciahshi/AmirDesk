@@ -11,6 +11,8 @@ on:
       - "Cargo.toml"
       - "Cargo.lock"
       - "build.py"
+      - "scripts/**"
+      - "AmirDesk Dynamic Tech Logo.png"
       - "vcpkg.json"
       - ".github/workflows/amirdesk-windows.yml"
       - ".github/workflows/bridge.yml"
