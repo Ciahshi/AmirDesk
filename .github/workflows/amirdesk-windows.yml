@@ -20,6 +20,7 @@ on:
 
 permissions:
   contents: read
+  actions: write
 
 concurrency:
   group: amirdesk-windows-${{ github.ref }}
@@ -32,10 +33,37 @@ env:
   VCPKG_COMMIT_ID: "9e593bb18ea69cc5095e012465dcd675a822ed0d"
 
 jobs:
+  cancel-older-runs:
+    name: Cancel superseded AmirDesk builds
+    runs-on: ubuntu-latest
+    steps:
+      - name: Cancel older runs of this workflow on the same branch
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CURRENT_RUN_ID: ${{ github.run_id }}
+          BRANCH_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          response="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs?branch=${BRANCH_NAME}&per_page=100")"
+          run_ids="$(printf '%s' "$response" | jq -r --arg current "$CURRENT_RUN_ID" '.workflow_runs[] | select(.path == ".github/workflows/amirdesk-windows.yml" and (.status == "queued" or .status == "in_progress") and ((.id | tostring) != $current)) | .id')"
+
+          if [ -z "$run_ids" ]; then
+            echo "No older AmirDesk builds need cancellation."
+            exit 0
+          fi
+
+          while IFS= read -r run_id; do
+            [ -z "$run_id" ] && continue
+            echo "Cancelling superseded run: $run_id"
+            gh api --method POST "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/cancel"
+          done <<< "$run_ids"
+
   generate-bridge:
+    needs: cancel-older-runs
     uses: ./.github/workflows/bridge.yml
 
   build-topmost:
+    needs: cancel-older-runs
     uses: ./.github/workflows/third-party-RustDeskTempTopMostWindow.yml
     with:
       upload-artifact: true
